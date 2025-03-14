@@ -1,2 +1,81 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+import json
+import requests
+import time
+import ibm_boto3
+from ibm_botocore.client import Config
+from sklearn.ensemble import IsolationForest
+import numpy as np
+
+# IBM Cloud Object Storage Credentials
+COS_ENDPOINT = "https://s3.us.cloud-object-storage.appdomain.cloud"
+COS_API_KEY_ID = "your_ibm_cloud_api_key"
+COS_INSTANCE_CRN = "your_ibm_cloud_instance_crn"
+
+# Initialize IBM Cloud Object Storage Client
+try:
+    cos = ibm_boto3.client("s3",
+                            ibm_api_key_id=COS_API_KEY_ID,
+                            ibm_service_instance_id=COS_INSTANCE_CRN,
+                            config=Config(signature_version="oauth"))
+except Exception as e:
+    print(f"Error initializing IBM Cloud Object Storage: {e}")
+    exit(1)
+
+def fetch_security_data():
+    """Fetch real-time security data from IBM Cloud Security API"""
+    url = "https://api.ibm.com/security/data"
+    headers = {"Authorization": f"Bearer {COS_API_KEY_ID}"}
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Failed to fetch security data: {e}")
+        return None
+
+def train_anomaly_model(data):
+    """Train an Isolation Forest model for anomaly detection"""
+    if not data:
+        print("No data available for training the model.")
+        return None
+    try:
+        model = IsolationForest(contamination=0.05, random_state=42)
+        np_data = np.array(data).reshape(-1, 1)
+        model.fit(np_data)
+        return model
+    except Exception as e:
+        print(f"Error training anomaly detection model: {e}")
+        return None
+
+def detect_anomalies(model, data):
+    """Detect anomalies in security data"""
+    if model is None or not data:
+        print("Model is not trained or data is empty.")
+        return []
+    try:
+        np_data = np.array(data).reshape(-1, 1)
+        predictions = model.predict(np_data)
+        anomalies = [data[i] for i in range(len(predictions)) if predictions[i] == -1]
+        return anomalies
+    except Exception as e:
+        print(f"Error detecting anomalies: {e}")
+        return []
+
+def main():
+    print("Starting real-time security intelligence system...")
+    while True:
+        security_data = fetch_security_data()
+        if security_data and "threat_scores" in security_data:
+            model = train_anomaly_model(security_data["threat_scores"])
+            anomalies = detect_anomalies(model, security_data["threat_scores"])
+            if anomalies:
+                print(f"ALERT: {len(anomalies)} anomalies detected! Sending alert...")
+                # Implement alert mechanism here (e.g., email, SMS, webhook)
+        else:
+            print("No valid security data received.")
+        time.sleep(60)  # Fetch data every 60 seconds
+
+if __name__ == "__main__":
+    main()
